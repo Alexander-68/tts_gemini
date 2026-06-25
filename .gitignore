@@ -1,0 +1,7 @@
+# secrets — never commit
+.env
+sa-key.json
+*.json.key
+
+# build output
+tts_gemini.exe

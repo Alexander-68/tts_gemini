@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemini TTS</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e9ef; --muted:#9aa3b2; --accent:#6ea8fe; }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; font:15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background:var(--bg); color:var(--fg); display:flex; justify-content:center; padding:32px 16px;
+  }
+  .app { width:100%; max-width:640px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 24px; font-size:13px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  label { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
+  .field { margin-bottom:16px; }
+  .row { display:flex; gap:12px; }
+  .row > .field { flex:1; }
+  textarea, input, select {
+    width:100%; background:#0f1218; color:var(--fg); border:1px solid var(--line);
+    border-radius:8px; padding:10px 12px; font:inherit; outline:none;
+  }
+  textarea { resize:vertical; min-height:96px; }
+  textarea:focus, input:focus, select:focus { border-color:var(--accent); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { background:#0f1218; color:var(--muted); border:none; padding:9px 16px; cursor:pointer; font:inherit; }
+  .seg button.active { background:var(--accent); color:#0b1020; font-weight:600; }
+  .go {
+    width:100%; margin-top:4px; background:var(--accent); color:#0b1020; border:none; border-radius:8px;
+    padding:12px; font-weight:600; font-size:15px; cursor:pointer;
+  }
+  .go:disabled { opacity:.55; cursor:default; }
+  audio { width:100%; margin-top:16px; display:none; }
+  .status { margin-top:12px; font-size:13px; color:var(--muted); min-height:18px; white-space:pre-wrap; }
+  .status.err { color:#ff8a8a; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Gemini Text-to-Speech</h1>
+  <p class="sub">Powered by Google Cloud Gemini-TTS</p>
+
+  <div class="panel">
+    <div class="field">
+      <label for="text">Text</label>
+      <textarea id="text" placeholder="Type the text you want spoken…">Hello! This is a quick test of Gemini text to speech.</textarea>
+    </div>
+
+    <div class="field">
+      <label for="prompt">Style prompt <span style="text-transform:none">(optional)</span></label>
+      <input id="prompt" placeholder="e.g. Read aloud in a warm, calm and friendly tone">
+    </div>
+
+    <div class="field">
+      <label>Voice gender</label>
+      <div class="seg" id="genderSeg">
+        <button data-gender="Female" class="active">Female</button>
+        <button data-gender="Male">Male</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="voice">Speaker</label>
+        <select id="voice"></select>
+      </div>
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="gemini-2.5-flash-tts">gemini-2.5-flash-tts (GA)</option>
+          <option value="gemini-2.5-pro-tts">gemini-2.5-pro-tts (GA)</option>
+          <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
+          <option value="gemini-2.5-flash-lite-preview-tts">gemini-2.5-flash-lite-preview-tts</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="langInput">Language <span style="text-transform:none">(type to filter)</span></label>
+      <input id="langInput" list="langList" placeholder="Search language…" autocomplete="off">
+      <datalist id="langList"></datalist>
+    </div>
+
+    <button class="go" id="go">Synthesize &amp; Play</button>
+    <div class="status" id="status"></div>
+    <audio id="player" controls></audio>
+  </div>
+</div>
+
+<script>
+// ---- Voices (name + gender) -------------------------------------------------
+const VOICES = [
+  ["Achernar","Female"],["Aoede","Female"],["Autonoe","Female"],["Callirrhoe","Female"],
+  ["Despina","Female"],["Erinome","Female"],["Gacrux","Female"],["Kore","Female"],
+  ["Laomedeia","Female"],["Leda","Female"],["Pulcherrima","Female"],["Sulafat","Female"],
+  ["Vindemiatrix","Female"],["Zephyr","Female"],
+  ["Achird","Male"],["Algenib","Male"],["Algieba","Male"],["Alnilam","Male"],["Charon","Male"],
+  ["Enceladus","Male"],["Fenrir","Male"],["Iapetus","Male"],["Orus","Male"],["Puck","Male"],
+  ["Rasalgethi","Male"],["Sadachbia","Male"],["Sadaltager","Male"],["Schedar","Male"],
+  ["Umbriel","Male"],["Zubenelgenubi","Male"]
+];
+
+// ---- Languages (BCP-47 code + display name) ---------------------------------
+const LANGUAGES = [
+  // GA
+  ["ar-EG","Arabic (Egypt)"],["bn-BD","Bengali (Bangladesh)"],["nl-NL","Dutch (Netherlands)"],
+  ["en-IN","English (India)"],["en-US","English (United States)"],["fr-FR","French (France)"],
+  ["de-DE","German (Germany)"],["hi-IN","Hindi (India)"],["id-ID","Indonesian (Indonesia)"],
+  ["it-IT","Italian (Italy)"],["ja-JP","Japanese (Japan)"],["ko-KR","Korean (South Korea)"],
+  ["mr-IN","Marathi (India)"],["pl-PL","Polish (Poland)"],["pt-BR","Portuguese (Brazil)"],
+  ["ro-RO","Romanian (Romania)"],["ru-RU","Russian (Russia)"],["es-ES","Spanish (Spain)"],
+  ["ta-IN","Tamil (India)"],["te-IN","Telugu (India)"],["th-TH","Thai (Thailand)"],
+  ["tr-TR","Turkish (Turkey)"],["uk-UA","Ukrainian (Ukraine)"],["vi-VN","Vietnamese (Vietnam)"],
+  // Preview
+  ["af-ZA","Afrikaans (South Africa)"],["sq-AL","Albanian (Albania)"],["am-ET","Amharic (Ethiopia)"],
+  ["ar-001","Arabic (World)"],["hy-AM","Armenian (Armenia)"],["az-AZ","Azerbaijani (Azerbaijan)"],
+  ["eu-ES","Basque (Spain)"],["be-BY","Belarusian (Belarus)"],["bg-BG","Bulgarian (Bulgaria)"],
+  ["my-MM","Burmese (Myanmar)"],["ca-ES","Catalan (Spain)"],["ceb-PH","Cebuano (Philippines)"],
+  ["cmn-CN","Chinese, Mandarin (China)"],["cmn-TW","Chinese, Mandarin (Taiwan)"],
+  ["hr-HR","Croatian (Croatia)"],["cs-CZ","Czech (Czechia)"],["da-DK","Danish (Denmark)"],
+  ["en-AU","English (Australia)"],["en-GB","English (United Kingdom)"],["et-EE","Estonian (Estonia)"],
+  ["fil-PH","Filipino (Philippines)"],["fi-FI","Finnish (Finland)"],["fr-CA","French (Canada)"],
+  ["gl-ES","Galician (Spain)"],["ka-GE","Georgian (Georgia)"],["el-GR","Greek (Greece)"],
+  ["gu-IN","Gujarati (India)"],["ht-HT","Haitian Creole (Haiti)"],["he-IL","Hebrew (Israel)"],
+  ["hu-HU","Hungarian (Hungary)"],["is-IS","Icelandic (Iceland)"],["jv-JV","Javanese"],
+  ["kn-IN","Kannada (India)"],["kok-IN","Konkani (India)"],["lo-LA","Lao (Laos)"],
+  ["la-VA","Latin (Vatican)"],["lv-LV","Latvian (Latvia)"],["lt-LT","Lithuanian (Lithuania)"],
+  ["lb-LU","Luxembourgish (Luxembourg)"],["mk-MK","Macedonian (North Macedonia)"],
+  ["mai-IN","Maithili (India)"],["mg-MG","Malagasy (Madagascar)"],["ms-MY","Malay (Malaysia)"],
+  ["ml-IN","Malayalam (India)"],["mn-MN","Mongolian (Mongolia)"],["ne-NP","Nepali (Nepal)"],
+  ["nb-NO","Norwegian Bokmål (Norway)"],["nn-NO","Norwegian Nynorsk (Norway)"],["or-IN","Odia (India)"],
+  ["ps-AF","Pashto (Afghanistan)"],["fa-IR","Persian (Iran)"],["pt-PT","Portuguese (Portugal)"],
+  ["pa-IN","Punjabi (India)"],["sr-RS","Serbian (Serbia)"],["sd-IN","Sindhi (India)"],
+  ["si-LK","Sinhala (Sri Lanka)"],["sk-SK","Slovak (Slovakia)"],["sl-SI","Slovenian (Slovenia)"],
+  ["es-419","Spanish (Latin America)"],["es-MX","Spanish (Mexico)"],["sw-KE","Swahili (Kenya)"],
+  ["sv-SE","Swedish (Sweden)"],["ur-PK","Urdu (Pakistan)"]
+];
+
+const $ = id => document.getElementById(id);
+
+// Build name -> code map and fill the datalist. The datalist option *value* is
+// the human label so the browser narrows by it as you type; we resolve to code.
+const NAME_TO_CODE = new Map();
+const dl = $("langList");
+for (const [code, name] of LANGUAGES) {
+  NAME_TO_CODE.set(name.toLowerCase(), code);
+  const o = document.createElement("option");
+  o.value = name;            // shown + matched while typing
+  o.label = code;            // hint on the side
+  dl.appendChild(o);
+}
+$("langInput").value = "English (United States)"; // sensible default
+
+// Cascade: gender -> speaker dropdown
+let gender = "Female";
+function fillVoices() {
+  const sel = $("voice");
+  sel.innerHTML = "";
+  for (const [name, g] of VOICES) {
+    if (g !== gender) continue;
+    const o = document.createElement("option");
+    o.value = name; o.textContent = name;
+    sel.appendChild(o);
+  }
+}
+fillVoices();
+
+$("genderSeg").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  gender = b.dataset.gender;
+  for (const btn of $("genderSeg").children) btn.classList.toggle("active", btn === b);
+  fillVoices();
+});
+
+// Resolve whatever is typed in the language box to a BCP-47 code.
+function resolveLang() {
+  const raw = $("langInput").value.trim();
+  if (!raw) return null;
+  const byName = NAME_TO_CODE.get(raw.toLowerCase());
+  if (byName) return byName;
+  // allow typing a raw code directly, or a partial label
+  const hit = LANGUAGES.find(([code, name]) =>
+    code.toLowerCase() === raw.toLowerCase() ||
+    name.toLowerCase().includes(raw.toLowerCase()));
+  return hit ? hit[0] : null;
+}
+
+let lastUrl = null;
+async function synth() {
+  const status = $("status");
+  status.className = "status";
+  const text = $("text").value.trim();
+  if (!text) { status.textContent = "Enter some text first."; return; }
+  const lang = resolveLang();
+  if (!lang) { status.className = "status err"; status.textContent = "Pick a language from the list."; return; }
+
+  const payload = {
+    text,
+    prompt: $("prompt").value.trim(),
+    voice: $("voice").value,
+    languageCode: lang,
+    model: $("model").value
+  };
+
+  $("go").disabled = true;
+  status.textContent = "Synthesizing…";
+  try {
+    const res = await fetch("/api/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let msg = await res.text();
+      try { msg = JSON.parse(msg).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(blob);
+    const p = $("player");
+    p.src = lastUrl;
+    p.style.display = "block";
+    await p.play().catch(() => {});
+    status.textContent = `Done — ${payload.voice} · ${lang} · ${payload.model}`;
+  } catch (err) {
+    status.className = "status err";
+    status.textContent = "Error: " + err.message;
+  } finally {
+    $("go").disabled = false;
+  }
+}
+$("go").addEventListener("click", synth);
+</script>
+</body>
+</html>
