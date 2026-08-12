@@ -85,3 +85,6 @@ access tokens from the service-account key — there is no token to rotate by ha
 
 Available models: `gemini-2.5-flash-tts` (default), `gemini-2.5-pro-tts`,
 `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-lite-preview-tts`.
+
+Documentation: https://docs.cloud.google.com/text-to-speech/docs/gemini-tts 
+
