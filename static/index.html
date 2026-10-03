@@ -57,9 +57,17 @@
     <div class="field">
       <label>Voice gender</label>
       <div class="seg" id="genderSeg">
-        <button data-gender="Female" class="active">Female</button>
+        <button data-gender="All" class="active">All</button>
+        <button data-gender="Female">Female</button>
         <button data-gender="Male">Male</button>
+        <button data-gender="Neutral">Neutral</button>
       </div>
+    </div>
+
+    <div class="field">
+      <label for="voiceSearch">Find a voice</label>
+      <input id="voiceSearch" type="search" placeholder="Name, accent, language or description…">
+      <div class="status" id="voiceStatus" role="status"></div>
     </div>
 
     <div class="row">
@@ -70,6 +78,8 @@
       <div class="field">
         <label for="model">Model</label>
         <select id="model">
+          <option value="gemini-3.8-flash-tts">Gemini 3.8 Flash TTS (Cloud preview)</option>
+          <option value="gemini-3.8-flash-lite-tts">Gemini 3.8 Flash-Lite TTS (Cloud preview)</option>
           <option value="gemini-2.5-flash-tts">gemini-2.5-flash-tts (GA)</option>
           <option value="gemini-2.5-pro-tts">gemini-2.5-pro-tts (GA)</option>
           <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
@@ -102,6 +112,21 @@ const VOICES = [
   ["Rasalgethi","Male"],["Sadachbia","Male"],["Sadaltager","Male"],["Schedar","Male"],
   ["Umbriel","Male"],["Zubenelgenubi","Male"]
 ];
+// Studio voices remain usable if the extended catalog cannot be loaded.
+const CHARACTERISTICS = {
+  Achernar: "Soft", Achird: "Friendly", Algenib: "Gravelly", Algieba: "Smooth",
+  Alnilam: "Firm", Aoede: "Breezy", Autonoe: "Bright", Callirrhoe: "Easy-going",
+  Charon: "Informative", Despina: "Smooth", Enceladus: "Breathy", Erinome: "Clear",
+  Fenrir: "Excitable", Gacrux: "Mature", Iapetus: "Clear", Kore: "Firm",
+  Laomedeia: "Upbeat", Leda: "Youthful", Orus: "Firm", Puck: "Upbeat",
+  Pulcherrima: "Forward", Rasalgethi: "Informative", Sadachbia: "Lively",
+  Sadaltager: "Knowledgeable", Schedar: "Even", Sulafat: "Warm", Umbriel: "Easy-going",
+  Vindemiatrix: "Gentle", Zephyr: "Bright", Zubenelgenubi: "Casual"
+};
+const STUDIO_VOICES = VOICES.map(([id, gender]) => ({
+  id, gender, label: `${id} — ${CHARACTERISTICS[id]}`
+}));
+let libraryVoices = [];
 
 // ---- Languages (BCP-47 code + display name) ---------------------------------
 const LANGUAGES = [
@@ -155,18 +180,62 @@ for (const [code, name] of LANGUAGES) {
 $("langInput").value = "English (United States)"; // sensible default
 
 // Cascade: gender -> speaker dropdown
-let gender = "Female";
+let gender = "All";
+const is38 = () => $("model").value.startsWith("gemini-3.8-");
 function fillVoices() {
   const sel = $("voice");
+  const previous = sel.value || "Kore";
+  const search = $("voiceSearch").value.trim().toLowerCase();
   sel.innerHTML = "";
-  for (const [name, g] of VOICES) {
-    if (g !== gender) continue;
+  const voices = is38() ? [...STUDIO_VOICES, ...libraryVoices] : STUDIO_VOICES;
+  for (const {id, gender: g, label} of voices) {
+    if (gender !== "All" && g !== gender) continue;
+    if (!`${id} ${label}`.toLowerCase().includes(search)) continue;
     const o = document.createElement("option");
-    o.value = name; o.textContent = name;
+    o.value = id; o.textContent = label;
     sel.appendChild(o);
   }
+  if ([...sel.options].some(o => o.value === previous)) sel.value = previous;
 }
 fillVoices();
+$("voiceSearch").addEventListener("input", fillVoices);
+$("model").addEventListener("change", () => {
+  fillVoices();
+  $("voiceStatus").hidden = !is38();
+});
+
+async function loadVoiceLibrary() {
+  $("voiceStatus").textContent = "Loading current voice library…";
+  try {
+    let token = "";
+    const seen = new Set(STUDIO_VOICES.map(v => v.id.toLowerCase()));
+    do {
+      const res = await fetch("/api/voices?" + new URLSearchParams({pageToken: token}));
+      if (!res.ok) {
+        let msg = await res.text();
+        try { msg = JSON.parse(msg).error?.message || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      for (const voice of data.voices || []) {
+        if (!voice.id || seen.has(voice.id.toLowerCase())) continue;
+        seen.add(voice.id.toLowerCase());
+        const rawGender = (voice.gender || "").toLowerCase().replace(/^.*gender_/, "");
+        const gender = rawGender ? rawGender[0].toUpperCase() + rawGender.slice(1) : "Neutral";
+        const label = [voice.displayName || voice.display_name || voice.id,
+          voice.languageCode || voice.language_code, voice.accent, gender,
+          voice.description].filter(Boolean).join(" · ");
+        libraryVoices.push({id: voice.id, gender, label});
+      }
+      fillVoices();
+      token = data.nextPageToken || data.next_page_token || "";
+    } while (token);
+    $("voiceStatus").textContent = `${STUDIO_VOICES.length + libraryVoices.length} voices available. Extended voices require a 3.8 model.`;
+  } catch (err) {
+    $("voiceStatus").textContent = `Voice library unavailable; ${STUDIO_VOICES.length + libraryVoices.length} voices loaded. ${err.message}`;
+  }
+}
+loadVoiceLibrary();
 
 $("genderSeg").addEventListener("click", e => {
   const b = e.target.closest("button");
@@ -195,6 +264,7 @@ async function synth() {
   status.className = "status";
   const text = $("text").value.trim();
   if (!text) { status.textContent = "Enter some text first."; return; }
+  if (!$("voice").value) { status.className = "status err"; status.textContent = "Choose a voice; clear the filters if none match."; return; }
   const lang = resolveLang();
   if (!lang) { status.className = "status err"; status.textContent = "Pick a language from the list."; return; }
 

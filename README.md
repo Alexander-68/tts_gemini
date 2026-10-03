@@ -2,19 +2,22 @@
 
 A minimalistic web app for text-to-speech using Google Cloud **Gemini-TTS**, with a small Go server.
 
-- Pick a voice by **gender** (Female/Male) → then **speaker name**
+- Search voices by name, accent, language or description; filter by **gender**
+- Gemini 3.8 loads the current **Extended Voice Library**, with the 30 studio voices available as a fallback
 - Pick a **language** from a type-to-filter list (89 languages, GA + preview)
 - Optional **style prompt** (e.g. *"Read in a calm, warm tone"*) and **model** selection
 - Plays the result in the browser
 
-The Go server is a thin proxy: it injects service-account credentials so the
-browser never sees a token, calls the Cloud Text-to-Speech `synthesize`
-endpoint, and streams back a WAV.
+The Go server injects service-account credentials so the browser never sees a
+token. Gemini 3.8 uses the Gemini Enterprise `generateContent` endpoint;
+earlier models use Cloud Text-to-Speech `synthesize`. Both return a WAV.
 
 ## Prerequisites
 
 - [Go](https://go.dev/dl/) 1.22+
 - A Google Cloud project with the **Text-to-Speech API** enabled
+- For Gemini 3.8 and the extended voice library, also enable the
+  **Gemini Enterprise API** (`aiplatform.googleapis.com`) in that project
 - A **service-account JSON key** with the `roles/aiplatform.user` role
   (Gemini-TTS models are served via Vertex AI)
 
@@ -79,12 +82,26 @@ access tokens from the service-account key — there is no token to rotate by ha
   "prompt": "Read in a calm, warm tone",
   "voice": "Kore",
   "languageCode": "en-US",
-  "model": "gemini-2.5-flash-tts"
+  "model": "gemini-3.8-flash-tts"
 }
 ```
 
-Available models: `gemini-2.5-flash-tts` (default), `gemini-2.5-pro-tts`,
-`gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-lite-preview-tts`.
+Available models (checked October 3, 2026):
 
-Documentation: https://docs.cloud.google.com/text-to-speech/docs/gemini-tts 
+- `gemini-3.8-flash-tts` (default; Cloud preview)
+- `gemini-3.8-flash-lite-tts` (Cloud preview)
+- `gemini-3.1-flash-tts-preview`
+- `gemini-2.5-flash-tts` (GA)
+- `gemini-2.5-pro-tts` (GA)
+- `gemini-2.5-flash-lite-preview-tts`
 
+Gemini 3.8 sends the style prompt as `speechMetadata.style`, separately from
+the spoken text. Extended voices are offered only for 3.8 models; earlier
+models use the 30 studio voices. `GET /api/voices` proxies the current prebuilt
+catalog, and accepts `pageToken` for pagination. If catalog loading fails, the
+UI shows the error and keeps the studio voices available.
+
+Run the proxy checks with `go test ./...`.
+
+Documentation: [Cloud TTS models](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts)
+and [Gemini 3.8 TTS and voice library](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/text-to-speech/overview).
